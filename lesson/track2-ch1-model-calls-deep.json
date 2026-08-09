@@ -1,0 +1,353 @@
+{
+  "title": "เรียกโมเดลอย่างมืออาชีพ (เจาะลึกระดับบท)",
+  "subtitle": "Track 2 · บทที่ 1 — ลงลึกทุกแง่ของการเรียก LLM ให้ robust: reliability, structured output, sampling, resilience, cost/latency",
+  "modules": [
+    {
+      "title": "1.1 โมเดลคือ network call ที่ไม่แน่นอน",
+      "tag": "mindset & errors",
+      "intro": "ก่อนเขียนบรรทัดแรก ต้องเปลี่ยนมุมมอง: การเรียก LLM ไม่ใช่ฟังก์ชัน แต่คือการคุยกับบริการภายนอกที่ทั้งช้า พัง และตอบไม่เหมือนเดิม",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "คิดแบบ distributed systems ตั้งแต่ต้น",
+          "body": "ฟังก์ชันปกติเรียกแล้วได้ผลเดิมทุกครั้งเกือบจะทันที แต่การเรียก LLM มีคุณสมบัติสามอย่างที่ทำให้ต้องคิดแบบ distributed systems: **ไม่แน่นอน** (ผลต่างกันได้ทุกครั้ง), **อาจล้มเหลว** (เครือข่าย/บริการล่ม/rate limit), และ **แพงและช้าเป็นหน่วยวินาที**\n\nengineer ที่เก่งจะไม่ถามว่า `ถ้ามันพังจะทำไง` เป็นข้อยกเว้น แต่ถือว่า **การพังคือกรณีปกติที่ต้องออกแบบรองรับ** ตั้งแต่แรก"
+        },
+        {
+          "type": "text",
+          "heading": "รู้จักศัตรู: taxonomy ของความล้มเหลว",
+          "body": "ความล้มเหลวแบ่งเป็นสองกลุ่มใหญ่ที่ต้อง handle คนละแบบ **Transient (ชั่วคราว)** — retry แล้วมักหาย และ **Permanent (ถาวร)** — retry ไปก็เท่านั้น ต้องแก้ที่ต้นเหตุ\n\nการแยกให้ออกสำคัญมาก เพราะ retry error ที่เป็น permanent คือการเผาเงินและเวลาเปล่า ๆ ส่วนการไม่ retry error ที่เป็น transient คือทำให้แอปเปราะโดยไม่จำเป็น"
+        },
+        {
+          "type": "list",
+          "heading": "แต่ละ error handle ยังไง",
+          "items": [
+            "**429 rate limit** → transient → retry แบบ backoff (มักมี Retry-After header ให้ทำตาม)",
+            "**timeout / เครือข่ายสะดุด** → transient → retry",
+            "**500 / 502 / 503** (ฝั่งผู้ให้บริการล่ม) → transient → retry + พิจารณา fallback model",
+            "**400 context length exceeded** → permanent → ตัด/สรุป context แล้วค่อยเรียกใหม่ อย่า retry ดื้อ ๆ",
+            "**401 / 403 auth** → permanent → fail fast แจ้ง config ผิด",
+            "**content filter / โมเดลปฏิเสธ** → ไม่ใช่ exception → เป็นคำตอบที่ถูกต้องแบบหนึ่ง ต้อง handle เป็น flow",
+            "**output ผิด format** → ไม่ใช่ exception → ต้อง validate แล้ว repair (โมดูล 1.2)"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "จุดบอดที่คนมองข้าม: failure ที่ไม่ throw",
+          "body": "อันตรายที่สุดไม่ใช่ error ที่ระเบิดออกมา แต่คือ **โมเดลตอบกลับมา 200 OK แต่เนื้อในผิด** — format พัง, ตอบนอกเรื่อง, หรือปฏิเสธอย่างสุภาพ พวกนี้ไม่ throw exception ถ้าโค้ดคุณเช็คแค่ HTTP status มันจะหลุดไปทั้งดุ้น"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "สมมติว่า `ทุก call จะพังในสักวิธีหนึ่ง` แล้วออกแบบย้อนกลับ — จะได้ระบบที่ทนทาน แทนที่จะไปไล่แก้ทีละ incident หลังผู้ใช้เจอ"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ข้อใดเป็น error แบบ permanent ที่ *ไม่* ควร retry ดื้อ ๆ?",
+          "options": ["429 rate limit", "503 service unavailable", "400 context length exceeded", "timeout ชั่วคราว"],
+          "answer": 2,
+          "explain": "context ยาวเกินเป็นปัญหาถาวร retry ไปก็เจอเหมือนเดิม ต้องแก้ที่ต้นเหตุ (ตัด/สรุป context) ส่วนที่เหลือเป็น transient ที่ retry ได้"
+        },
+        {
+          "q": "โมเดลตอบกลับมา 200 OK แต่ JSON พัง ควรจัดเป็นอะไร?",
+          "options": ["ไม่ต้องสนใจ เพราะ status OK", "เป็น failure ที่ต้อง validate แล้ว repair แม้ไม่มี exception", "retry ทันทีเสมอ", "เปลี่ยนโมเดลใหญ่ขึ้น"],
+          "answer": 1,
+          "explain": "failure ที่ไม่ throw คือจุดบอดสำคัญ ต้อง validate เนื้อในเสมอ ไม่ใช่เชื่อแค่ HTTP status"
+        },
+        {
+          "q": "เจอ 429 rate limit ควรทำยังไง?",
+          "options": ["fail fast ทันที", "retry แบบ backoff (และเคารพ Retry-After ถ้ามี)", "เปลี่ยน API key", "ลดขนาด output"],
+          "answer": 1,
+          "explain": "429 เป็น transient เกิดจากยิงถี่เกิน retry แบบเว้นระยะเพิ่มขึ้น (backoff) และทำตาม Retry-After จะแก้ได้"
+        }
+      ]
+    },
+    {
+      "title": "1.2 Structured Output ให้แน่นจริง",
+      "tag": "output ที่เชื่อถือได้",
+      "intro": "ถ้าเอาผลไปใช้ต่อในโค้ด output ต้องแน่นระดับที่ parse แล้วไว้ใจได้ โมดูลนี้เจาะสามวิธีบังคับ และชั้นการ validate/repair",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "สามวิธีบังคับ structured output (และ tradeoff)",
+          "body": "**1) Prompt-only JSON** — สั่งใน prompt ให้ตอบเป็น JSON ง่ายสุดแต่เปราะสุด โมเดลอาจแถมข้อความหรือใส่ ```json fence\n\n**2) Schema-constrained / structured outputs** — ส่ง JSON schema ให้ ผู้ให้บริการหลายเจ้ารับประกันว่า output ตรง schema แน่นและควรใช้ถ้ามี\n\n**3) Tool/function-calling style** — นิยาม output เป็น schema ของ tool แล้วบังคับให้เรียก เหมาะเมื่ออยากได้ทั้งการตัดสินใจและโครงสร้างพร้อมกัน"
+        },
+        {
+          "type": "text",
+          "heading": "validation มีสามชั้น ไม่ใช่ชั้นเดียว",
+          "body": "อย่าหยุดแค่ parse ผ่าน ให้ตรวจสามชั้น: **(1) syntactic** — parse เป็น JSON ได้ไหม, **(2) schema** — ฟิลด์ครบ type ถูกไหม, **(3) semantic** — ค่า *สมเหตุสมผล* ไหม เช่น จำนวนเงินไม่ติดลบ วันที่ไม่อยู่อนาคต enum อยู่ในชุดที่กำหนด\n\nชั้นที่คนลืมบ่อยคือชั้น 3 — JSON ที่ valid ไม่ได้แปลว่าข้อมูลถูก โมเดลอาจกุค่าที่ถูก type แต่ผิดความจริง"
+        },
+        {
+          "type": "code",
+          "heading": "loop validate → repair แบบมีเพดาน",
+          "body": "def call_structured(prompt, schema, max_repair=2):\n    msg = prompt\n    for attempt in range(max_repair + 1):\n        raw = call_model(msg, response_format=schema)\n        try:\n            data = schema.validate(raw)      # syntactic + schema\n            assert is_semantically_valid(data)  # ชั้นที่ 3\n            return data\n        except (SchemaError, AssertionError) as e:\n            # แนบ error กลับไปให้โมเดลแก้เอง\n            msg = prompt + '\\n\\nผลก่อนหน้าผิดเพราะ: ' + str(e)\n    raise OutputError('ซ่อมไม่สำเร็จหลังลอง ' + str(max_repair) + ' ครั้ง')"
+        },
+        {
+          "type": "text",
+          "heading": "streaming ปะทะ structured output",
+          "body": "สองอย่างนี้ขัดกันโดยธรรมชาติ: streaming ทยอยส่ง token ทำให้ UX ดี แต่ระหว่างทาง JSON ยังไม่ครบ parse ไม่ได้\n\nทางเลือกจริง: **(ก)** ถ้าผู้ใช้ต้องอ่าน ให้ stream ข้อความล้วน แล้วเก็บ structured แยกในอีก call, **(ข)** ใช้ partial/incremental JSON parser ที่ทน JSON ไม่ครบ, หรือ **(ค)** stream เฉพาะ field ที่เป็นข้อความยาว (เช่น `answer`) แล้วส่ง field โครงสร้างตอนจบ ส่วนใหญ่เลือก (ก) เพราะง่ายและเสถียร"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่าง: extraction จากเอกสารการเงิน",
+          "body": "ดึงข้อมูลจากใบแจ้งหนี้เป็น `{invoice_no, amount, due_date, currency}` — ชั้น schema เช็ค type, ชั้น semantic เช็คว่า amount > 0, currency อยู่ในชุดที่รองรับ, due_date เป็นวันที่จริง ถ้าไม่ผ่านก็ repair ถ้ายังไม่ผ่านให้ส่งเข้า human review ไม่ใช่ปล่อยข้อมูลมั่วเข้าระบบบัญชี"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก",
+          "body": "เชื่อว่า `valid JSON = ข้อมูลถูก` · ลืมเพดานจำนวนครั้ง repair จน loop วนไม่จบและเผา token · ใช้ prompt-only JSON ในงาน production ทั้งที่ผู้ให้บริการมี structured output ให้ใช้"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "ปฏิบัติกับ output ของโมเดลเหมือน `input จากผู้ใช้ที่ไม่น่าไว้ใจ` — parse, validate ทุกชั้น, และมีแผนเมื่อมันผิด ไม่ใช่ assume ว่าถูก"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "validation ของ structured output ควรมีกี่ชั้น อะไรบ้าง?",
+          "options": ["ชั้นเดียว: parse ผ่านก็พอ", "สามชั้น: syntactic, schema, semantic", "สองชั้น: parse และความยาว", "ไม่ต้อง validate ถ้าใช้ schema mode"],
+          "answer": 1,
+          "explain": "ต้องเช็คทั้งว่า parse ได้ (syntactic), ตรง schema, และค่าสมเหตุสมผล (semantic) เพราะ JSON ที่ valid อาจมีค่าที่ผิดความจริง"
+        },
+        {
+          "q": "ทำไม streaming กับ structured output ถึงขัดกัน?",
+          "options": ["streaming แพงกว่า", "ระหว่าง st, JSON ยังไม่ครบจึง parse ไม่ได้", "structured output ห้าม stream", "โมเดลไม่รองรับ"],
+          "answer": 1,
+          "explain": "streaming ส่ง token ทีละตัว ระหว่างทาง JSON ยังไม่สมบูรณ์ จึง parse เป็นโครงสร้างไม่ได้จนกว่าจะครบ ต้องเลือกกลยุทธ์รับมือ"
+        },
+        {
+          "q": "loop repair ควรมีอะไรกันปัญหา?",
+          "options": ["ไม่ต้องมีเพดาน วนจนกว่าจะผ่าน", "เพดานจำนวนครั้ง แล้ว fallback/human review เมื่อครบ", "เพิ่ม temperature ทุกครั้ง", "เปลี่ยนโมเดลทุกครั้ง"],
+          "answer": 1,
+          "explain": "ต้องจำกัดจำนวนครั้ง repair ไม่งั้น loop อาจวนไม่จบและเผา token เมื่อครบเพดานให้มี fallback หรือส่ง human review"
+        }
+      ]
+    },
+    {
+      "title": "1.3 พารามิเตอร์ Sampling เชิงลึก",
+      "tag": "คุมพฤติกรรมโมเดล",
+      "intro": "temperature/top-p ไม่ใช่ปุ่มมายากล — เข้าใจว่ามันทำอะไรกับ probability distribution แล้วจะตั้งค่าถูกทุกงาน",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "โมเดลไม่ได้เลือกคำ มันออก distribution",
+          "body": "ทุกสเต็ป โมเดลไม่ได้ 'เลือกคำเดียว' แต่ออก **การกระจายความน่าจะเป็นเหนือทุก token** (logits → softmax → distribution) การ **sampling** คือกติกาว่าจะหยิบ token ถัดไปจาก distribution นั้นยังไง\n\nพารามิเตอร์อย่าง temperature/top-p/top-k คือการปรับรูปร่างและขอบเขตของ distribution ก่อนหยิบ — เข้าใจจุดนี้แล้วทุกพารามิเตอร์จะ make sense"
+        },
+        {
+          "type": "list",
+          "heading": "แต่ละพารามิเตอร์ทำอะไรกับ distribution",
+          "items": [
+            "**temperature** — ปรับความชันของ distribution ก่อน softmax ต่ำ (→0) ทำให้ชันขึ้น เกือบเลือกตัวที่น่าจะเป็นที่สุด (greedy) สูงทำให้แบนลง สุ่มมากขึ้น",
+            "**top-k** — ตัดให้เหลือ k token ที่น่าจะเป็นสูงสุด แล้วค่อยสุ่มในนั้น",
+            "**top-p (nucleus)** — เก็บ token ที่รวมความน่าจะเป็นได้ถึง p (เช่น 0.9) แล้วสุ่มในกลุ่มนั้น ปรับตัวตามความมั่นใจของโมเดล",
+            "**temperature = 0** — เข้าใกล้ argmax (เลือกตัวน่าจะเป็นสูงสุดเสมอ) แต่ยังไม่การันตี deterministic 100%"
+          ]
+        },
+        {
+          "type": "list",
+          "heading": "ตั้งค่ายังไงตามงาน (guideline)",
+          "items": [
+            "**extraction / classification / tool calling** → temperature ต่ำมาก (0–0.2) ต้องการความแม่นและซ้ำได้",
+            "**Q&A / RAG** → ต่ำ (0.2–0.4) ให้ยึดข้อเท็จจริง ไม่เพ้อ",
+            "**เขียน/ไอเดีย/brainstorm** → สูง (0.7–1.0) ต้องการความหลากหลาย",
+            "**หลักการ** → ปรับ temperature *หรือ* top-p อย่างใดอย่างหนึ่ง ไม่ใช่ทั้งคู่พร้อมกัน"
+          ]
+        },
+        {
+          "type": "text",
+          "heading": "determinism & reproducibility (สำคัญกับ eval)",
+          "body": "แม้ตั้ง temperature = 0 ผลก็อาจ **ไม่ซ้ำเป๊ะ 100%** ได้ เพราะการคำนวณ floating-point, การ batch คำขอ, และความไม่แน่นอนใน infra ของผู้ให้บริการ\n\n`seed` (ถ้ารองรับ) ช่วยให้ซ้ำได้ใกล้เดิมขึ้น แต่ไม่การันตีข้ามรุ่นโมเดล ผลกับงานจริง: ตอนทำ **eval** ให้ตรึง temperature ต่ำ + seed เพื่อลด noise และอย่าแปลกใจถ้าผลขยับเล็กน้อยระหว่างรัน"
+        },
+        {
+          "type": "callout",
+          "variant": "note",
+          "heading": "เกร็ด",
+          "body": "อย่าปรับ temperature กับ top-p พร้อมกันโดยไม่เข้าใจ ทั้งคู่จำกัดความสุ่มคนละทาง ปรับพร้อมกันแล้วผลจะเดายาก เลือกคุมทีละตัว"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "temperature ต่ำ = `ให้โมเดลเดินตามความมั่นใจของตัวเอง` (แม่น ซ้ำได้) · temperature สูง = `ให้มันกล้าออกนอกทาง` (สร้างสรรค์ เสี่ยงมั่ว) เลือกตามว่างานต้องการความแม่นหรือความหลากหลาย"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "temperature ทำอะไรในเชิงกลไก?",
+          "options": ["เลือกโมเดลที่ใหญ่ขึ้น", "ปรับความชันของ probability distribution ก่อนสุ่ม token", "เพิ่มจำนวน token", "เปิด/ปิด caching"],
+          "answer": 1,
+          "explain": "temperature ปรับรูปร่างของ distribution ต่ำทำให้ชัน (เกือบ greedy) สูงทำให้แบน (สุ่มมากขึ้น) ก่อนที่จะ sample token ถัดไป"
+        },
+        {
+          "q": "งาน extraction ที่ต้องแม่นและซ้ำได้ ควรตั้งค่ายังไง?",
+          "options": ["temperature สูง 0.9", "temperature ต่ำมาก 0–0.2", "top-p 1.0 กับ temperature 1.0", "สุ่มค่าแต่ละครั้ง"],
+          "answer": 1,
+          "explain": "งานที่ต้องการความแม่นและผลซ้ำได้ ควรใช้ temperature ต่ำมากเพื่อให้โมเดลเลือกตัวที่มั่นใจที่สุดอย่างสม่ำเสมอ"
+        },
+        {
+          "q": "temperature = 0 การันตีผลเหมือนเดิม 100% ไหม?",
+          "options": ["ใช่ เป๊ะเสมอ", "ไม่ เพราะ floating-point/batching/infra ทำให้ยังมี noise ได้", "ได้เฉพาะโมเดลเล็ก", "ได้เฉพาะเมื่อปิด streaming"],
+          "answer": 1,
+          "explain": "temp=0 เข้าใกล้ argmax แต่ปัจจัยเชิง infra ทำให้ยังไม่ deterministic เป๊ะ seed ช่วยได้บ้างแต่ไม่การันตีข้ามรุ่น"
+        }
+      ]
+    },
+    {
+      "title": "1.4 การจัดการความล้มเหลว (Resilience)",
+      "tag": "ทำให้ทนพัง",
+      "intro": "รู้แล้วว่าอะไรพังได้บ้าง โมดูลนี้คือกลไกจริงที่ทำให้แอปทนต่อความพังเหล่านั้น: backoff, idempotency, fallback, circuit breaker",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "retry ต้องมี exponential backoff + jitter",
+          "body": "retry เฉย ๆ ไม่พอ ต้อง **เว้นระยะเพิ่มขึ้นแบบทวีคูณ** (exponential backoff) เพื่อไม่ยิงซ้ำถี่ตอนบริการกำลังฟื้น และต้องใส่ **jitter** (สุ่มเวลานิดหน่อย) เพื่อไม่ให้ทุก client retry พร้อมกันจนถล่มบริการซ้ำ (thundering herd)"
+        },
+        {
+          "type": "code",
+          "heading": "สูตร backoff + jitter",
+          "body": "import random, time\n\ndef retry_with_backoff(fn, max_attempts=5, base=0.5, cap=8.0):\n    for attempt in range(max_attempts):\n        try:\n            return fn()\n        except TransientError:\n            if attempt == max_attempts - 1:\n                raise\n            delay = min(cap, base * (2 ** attempt))  # 0.5, 1, 2, 4, 8...\n            delay += random.uniform(0, delay * 0.3)   # jitter กันยิงพร้อมกัน\n            time.sleep(delay)"
+        },
+        {
+          "type": "text",
+          "heading": "idempotency — กันการทำซ้ำตอน retry",
+          "body": "retry อันตรายเมื่อ call นั้นมี **side effect** เช่นถ้า retry คำสั่งโอนเงินเพราะ timeout แต่จริง ๆ ครั้งแรกสำเร็จแล้ว = โอนซ้ำสองรอบ\n\nทางแก้คือ **idempotency key** — แนบ key เฉพาะต่อหนึ่ง action ฝั่งปลายทางเห็น key ซ้ำก็ไม่ทำซ้ำ ทำให้ retry ปลอดภัย จำเป็นมากกับ tool ที่แก้ข้อมูล/จ่ายเงิน (โยงกับโมดูล Tool Calling)"
+        },
+        {
+          "type": "text",
+          "heading": "fallback & degraded response",
+          "body": "เมื่อ retry แล้วยังไม่รอด อย่าปล่อยให้ผู้ใช้เจอ error เปล่า ๆ เตรียม **fallback**: สลับไปโมเดลสำรอง (เช่นตัวหลักล่ม → ใช้ตัวเล็กกว่า), คืน **cached response** ถ้ามี, หรือคืน **degraded response** ที่บอกตรง ๆ ว่าตอนนี้ทำได้แค่นี้ ดีกว่าค้างหรือพังเงียบ"
+        },
+        {
+          "type": "text",
+          "heading": "circuit breaker & timeout budget",
+          "body": "ถ้าบริการล่มหนัก การ retry ต่อไปยิ่งซ้ำเติม **circuit breaker** จะ 'ตัดวงจร' ชั่วคราวเมื่อ error ถึงเกณฑ์ แล้วคืน fallback ทันทีโดยไม่เรียกจริง ช่วยกันระบบล่มลามและให้เวลาปลายทางฟื้น\n\nและทุก request ควรมี **timeout budget** รวม — โดยเฉพาะ agent หลายสเต็ป ต้องมีเพดานเวลารวม ไม่ใช่ปล่อยให้แต่ละสเต็ป timeout ต่อกันจนผู้ใช้รอเป็นนาที"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่าง: เคสที่ handle ครบ",
+          "body": "ผู้ใช้กดถาม → เรียกโมเดลหลัก timeout → retry backoff (0.5s, 1s) ยังไม่รอด → circuit breaker เห็น error rate สูงจึงตัด → fallback ไปโมเดลเล็กตอบแบบ degraded พร้อมโน้ตว่าระบบกำลังหนาแน่น → ผู้ใช้ยังได้คำตอบ ไม่เจอหน้าจอค้าง"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก",
+          "body": "retry แบบไม่มี jitter → ทุก client ยิงพร้อมกันตอนบริการฟื้น = ถล่มซ้ำ (thundering herd) · retry call ที่มี side effect โดยไม่มี idempotency key → ทำงานซ้ำ · ไม่มี timeout budget รวมใน agent → ผู้ใช้รอไม่จบ"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "resilience = `ทำให้ความพังของชิ้นเดียว ไม่ลามเป็นความพังของทั้งระบบ` ทุกกลไกในโมดูลนี้คือการจำกัดวงความเสียหาย"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ทำไม retry ต้องมี jitter?",
+          "options": ["ให้ retry เร็วขึ้น", "กันทุก client retry พร้อมกันจนถล่มบริการซ้ำ (thundering herd)", "ประหยัด token", "ทำให้ผลแม่นขึ้น"],
+          "answer": 1,
+          "explain": "ถ้าทุก client ใช้เวลา backoff เท่ากันเป๊ะ มันจะยิงพร้อมกันตอนบริการฟื้น jitter สุ่มเวลาเล็กน้อยเพื่อกระจายการยิงออก"
+        },
+        {
+          "q": "idempotency key จำเป็นที่สุดกับอะไร?",
+          "options": ["การอ่านข้อมูลเฉย ๆ", "call ที่มี side effect เช่นโอนเงิน เพื่อกันการทำซ้ำตอน retry", "การตั้ง temperature", "การ stream คำตอบ"],
+          "answer": 1,
+          "explain": "เมื่อ retry call ที่มี side effect อาจทำงานซ้ำ (เช่นโอนเงินสองรอบ) idempotency key ทำให้ปลายทางไม่ทำซ้ำแม้ได้รับคำขอเดิม"
+        },
+        {
+          "q": "circuit breaker ช่วยอะไร?",
+          "options": ["เพิ่มความเร็วโมเดล", "ตัดการเรียกชั่วคราวเมื่อบริการล่มหนัก แล้วคืน fallback กันระบบล่มลาม", "บีบอัด prompt", "ทำ eval อัตโนมัติ"],
+          "answer": 1,
+          "explain": "circuit breaker หยุดยิงคำขอไปยังบริการที่กำลังล่ม เพื่อไม่ซ้ำเติมและให้เวลาฟื้น ระหว่างนั้นคืน fallback ให้ผู้ใช้แทน"
+        }
+      ]
+    },
+    {
+      "title": "1.5 Cost & Latency Engineering",
+      "tag": "ถูกและเร็ว",
+      "intro": "แอปที่ตอบดีแต่แพงหรือช้าเกินก็ใช้จริงไม่ได้ โมดูลนี้เจาะ token economics, ชั้นของ caching, และการวัด latency แบบมืออาชีพ",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "token economics ให้ลึกกว่า 'จ่ายตาม token'",
+          "body": "จ่ายแยกกันระหว่าง **input** (prompt + context + เอกสารที่แปะ + ประวัติสนทนา) และ **output** (คำตอบ) โดยทั่วไป **output แพงกว่า input ต่อ token หลายเท่า** เพราะต้อง generate ทีละตัว\n\nนัยที่สำคัญ: context ยาว ๆ คุณจ่าย input tokens ของมัน **ทุก call** และในแอปที่ต่อประวัติสนทนาไปเรื่อย ๆ input จะโตขึ้นทุก turn — นี่คือที่มาของบิลที่บานแบบเงียบ ๆ"
+        },
+        {
+          "type": "list",
+          "heading": "ชั้นของ caching (แต่ละชั้นช่วยคนละจุด)",
+          "items": [
+            "**exact / response cache** — คำถามเหมือนเป๊ะ (หลัง normalize) → คืนคำตอบเดิม ไม่เรียกโมเดลเลย",
+            "**semantic cache** — embed คำถาม ถ้าใกล้กับคำถามที่เคยถาม (cosine เกิน threshold) → ใช้คำตอบเดิม จับคำถามที่ 'ความหมายเหมือน' แม้คำต่าง",
+            "**prompt / prefix cache** — ผู้ให้บริการ cache การประมวลผลของ prefix ที่ซ้ำ (system prompt ยาว, เอกสารเดิม) ทำให้ input ซ้ำถูกและเร็วลง"
+          ]
+        },
+        {
+          "type": "text",
+          "heading": "กายวิภาคของ latency",
+          "body": "latency แยกเป็นส่วน: **TTFT (time to first token)** เวลากว่าจะเริ่มได้ token แรก และ **เวลา generate** ที่ ~ จำนวน output tokens × เวลาต่อ token รวม ≈ TTFT + (output_tokens × time_per_token)\n\nนัย: **streaming ช่วย perceived latency** (ผู้ใช้เห็น token แรกเร็ว) แต่ไม่ลดเวลารวม · **output ยาว = ช้ากว่าเสมอ** จำกัดความยาวช่วยได้ตรง ๆ · **โมเดลเล็กกว่ามัก TTFT ต่ำกว่า** เลือกให้เหมาะงาน"
+        },
+        {
+          "type": "list",
+          "heading": "เทคนิคลด cost/latency แบบ actionable",
+          "items": [
+            "ตัด context ให้เหลือเท่าที่จำเป็น (RAG ที่ดีช่วยตรงนี้ — ส่งเฉพาะชิ้นที่เกี่ยว)",
+            "จำกัด max output tokens และออกแบบให้ตอบกระชับ",
+            "routing: งานง่ายส่งโมเดลเล็ก งานยากส่งตัวใหญ่",
+            "prompt/prefix caching สำหรับ system prompt และเอกสารที่ซ้ำ",
+            "semantic cache สำหรับคำถามยอดฮิต",
+            "batch งานที่ไม่ต้อง real-time"
+          ]
+        },
+        {
+          "type": "text",
+          "heading": "วัดให้เป็น: อย่าดูแค่ค่าเฉลี่ย",
+          "body": "ค่าเฉลี่ยหลอกได้ ให้ดู **percentile**: p50 (กลาง), **p95/p99** (หางที่ผู้ใช้บางส่วนเจอจริง) เพราะ p99 ที่แย่คือประสบการณ์พังของลูกค้า 1 ใน 100 คน\n\nตั้ง metric ที่ต้องมี: cost/request, tokens/request, p95 latency, cache hit rate และตั้ง **budget + alert** เมื่อทะลุ ไม่ใช่มารู้ตอนสิ้นเดือน"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่าง: ลด cost เกือบครึ่ง",
+          "body": "FAQ bot ร้านค้า คำถามยอดฮิตอย่าง `ส่งของกี่วัน` ถูกถามวันละพันครั้งด้วยถ้อยคำต่าง ๆ ใส่ semantic cache ให้คำถามความหมายเหมือนดึงคำตอบเดิม → การเรียกโมเดลลดเกือบครึ่ง cache hit rate ~45% บิลรายเดือนลดฮวบและ p95 latency ดีขึ้นทันที"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก",
+          "body": "ดูแค่ latency เฉลี่ยแล้วนึกว่าเร็ว ทั้งที่ p99 แย่ · ปล่อยประวัติสนทนายาวขึ้นเรื่อย ๆ โดยไม่สรุป/ตัด จน input บานทุก turn · เปิด caching แต่ไม่วัด hit rate เลยไม่รู้ว่าช่วยจริงไหม"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "ทุก token มีทั้งราคาและเวลาติดอยู่ งานวิศวกรรมคือ `ส่งสิ่งที่จำเป็นที่สุดให้โมเดล และเรียกมันน้อยครั้งที่สุด` โดยยังได้คุณภาพที่ต้องการ — วัดทุกอย่างด้วยตัวเลขจริง"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ทำไม context ยาว ๆ ถึงทำให้บิลบานแบบเงียบ ๆ?",
+          "options": ["เพราะ output แพงขึ้น", "เพราะต้องจ่าย input tokens ของ context นั้นทุก call และประวัติที่โตขึ้นทุก turn", "เพราะโมเดลช้าลง", "เพราะ cache หมดอายุ"],
+          "answer": 1,
+          "explain": "context เป็น input tokens ที่จ่ายทุกครั้งที่เรียก และในแอปที่ต่อประวัติไปเรื่อย ๆ input จะโตทุก turn ทำให้ต้นทุนไต่ขึ้นเงียบ ๆ"
+        },
+        {
+          "q": "semantic cache ต่างจาก exact cache ยังไง?",
+          "options": ["มันเร็วกว่าเฉย ๆ", "มันจับคำถามที่ 'ความหมายเหมือน' แม้ใช้คำต่างกัน ไม่ใช่แค่เหมือนเป๊ะ", "มันเก็บได้เยอะกว่า", "มันไม่ต้องใช้ embedding"],
+          "answer": 1,
+          "explain": "exact cache ต้องเหมือนเป๊ะ ส่วน semantic cache ใช้ embedding วัดความใกล้เชิงความหมาย จึงจับคำถามที่สื่อความเหมือนกันแม้ถ้อยคำต่างได้"
+        },
+        {
+          "q": "ทำไมควรดู p95/p99 ไม่ใช่แค่ค่าเฉลี่ย?",
+          "options": ["เพราะค่าเฉลี่ยคำนวณยาก", "เพราะ p95/p99 คือประสบการณ์จริงของหางผู้ใช้ที่เจอความช้า ซึ่งค่าเฉลี่ยกลบไว้", "เพราะ p99 ถูกกว่า", "เพราะค่าเฉลี่ยใช้ไม่ได้กับ token"],
+          "answer": 1,
+          "explain": "ค่าเฉลี่ยอาจดูดีแต่กลบเคสที่ช้ามาก p95/p99 เผยประสบการณ์ของผู้ใช้ส่วนที่เจอ latency แย่ ซึ่งสำคัญต่อคุณภาพจริง"
+        }
+      ]
+    }
+  ]
+}
