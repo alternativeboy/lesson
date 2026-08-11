@@ -1,0 +1,625 @@
+{
+  "title": "Recap Backend Developer — Java Spring Boot ⚔️ Golang",
+  "subtitle": "ทบทวนแกนสำคัญของสอง stack เทียบกันทีละชั้น: ภาษา → concurrency → web → data → config → test → deploy",
+  "modules": [
+    {
+      "title": "1. ภาพรวมและปรัชญาของสอง stack",
+      "tag": "foundation",
+      "intro": "ก่อนเทียบรายละเอียด ต้องเข้าใจก่อนว่าสองฝั่งนี้ 'ตั้งใจ' แก้ปัญหาคนละแบบ",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "แกนของความต่าง",
+          "body": "**Spring Boot** อยู่บน JVM และเลือกทาง *convention + abstraction*: framework จัดการงานซ้ำ ๆ ให้ (DI, transaction, ORM, security) ผ่าน annotation และ auto-configuration เราเขียนโค้ดน้อยลง แต่ต้องเข้าใจว่า framework ทำอะไรลับหลัง\n\n**Go** เลือกทาง *explicit + minimal*: standard library ครอบคลุมงาน backend เกือบทั้งหมด (`net/http`, `database/sql`, `encoding/json`) ไม่มี magic ไม่มี proxy ที่ห่อ object ของเรา ทุกอย่างที่เกิดขึ้นอ่านเจอในโค้ด แลกกับต้องเขียน boilerplate เองมากกว่า"
+        },
+        {
+          "type": "list",
+          "heading": "เทียบเชิงปรัชญา",
+          "items": [
+            "**Runtime** — JVM มี JIT compiler ทำให้ระยะยาววิ่งเร็วมาก แต่ต้อง warm up / Go compile เป็น native binary ตั้งแต่แรก วิ่งเร็วทันทีตั้งแต่ request แรก",
+            "**Ecosystem** — Java มี library โตเต็มวัยเกือบทุกโดเมน (batch, messaging, enterprise integration) / Go เน้น stdlib + library เล็ก ๆ ที่ประกอบเองได้",
+            "**ขนาดทีม** — Spring Boot ได้เปรียบเมื่อ domain ซับซ้อนและทีมใหญ่ต้องการ structure ตายตัว / Go ได้เปรียบเมื่ออยากให้ dev ใหม่อ่านโค้ดเข้าใจได้ในวันเดียว",
+            "**เวลาเรียนรู้** — Go spec สั้นมาก เรียนภาษาจบใน 1–2 สัปดาห์ / ความยากของ Java สมัยนี้อยู่ที่ Spring ecosystem ไม่ใช่ตัวภาษา"
+          ]
+        },
+        {
+          "type": "code",
+          "heading": "HTTP endpoint แรกของทั้งสองฝั่ง",
+          "body": "// Spring Boot — framework จัดการ routing/serialize ให้\n@RestController\nclass HelloController {\n  @GetMapping('/hello')\n  Map<String,String> hello() {\n    return Map.of('msg', 'hi');\n  }\n}\n\n// Go — เราเขียน routing และ serialize เอง\nfunc hello(w http.ResponseWriter, r *http.Request) {\n  w.Header().Set('Content-Type', 'application/json')\n  json.NewEncoder(w).Encode(map[string]string{'msg': 'hi'})\n}\nhttp.HandleFunc('/hello', hello)"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "Spring Boot = ร้านอาหารที่มีเชฟครบครัว สั่งแล้วได้จาน / Go = ครัวเปล่าที่มีมีดคมและวัตถุดิบดี อยากได้อะไรลงมือทำเอง ทั้งคู่ทำอาหารอร่อยได้ แต่คุมรสได้คนละระดับ"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่างการเลือกจริง",
+          "body": "ระบบ core banking ที่มี business rule พันข้อ ต้องการ transaction, audit, batch → Spring Boot ประหยัดเวลาทีมมหาศาล\n\nส่วน API gateway ที่รับ 50k req/s ต้องการ latency p99 ต่ำและ memory footprint เล็ก (คอนเทนเนอร์ 64–128MB) → Go เหมาะกว่าชัดเจน"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดักที่พบบ่อย",
+          "body": "อย่าเถียงกันว่า 'ภาษาไหนเร็วกว่า' โดยไม่ระบุ workload — ในงาน CPU-bound ระยะยาว JVM หลัง warm up มักสูสีหรือชนะ Go ด้วยซ้ำ จุดที่ Go ชนะขาดคือ **startup time, memory footprint และความง่ายในการ deploy** ไม่ใช่ throughput เสมอไป"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ข้อใดอธิบายข้อได้เปรียบหลักของ Go เหนือ Spring Boot ได้ตรงที่สุด?",
+          "options": [
+            "Go มี throughput สูงกว่า JVM ทุกกรณี",
+            "Go startup เร็วระดับ millisecond และใช้ memory น้อยกว่ามาก",
+            "Go มี library สำหรับงาน enterprise มากกว่า",
+            "Go มี type system ที่ทรงพลังกว่า generics ของ Java"
+          ],
+          "answer": 1,
+          "explain": "จุดแข็งของ Go คือ native binary ที่ start ทันทีและ footprint เล็ก เหมาะกับ container/serverless ส่วน throughput นั้น JVM หลัง JIT warm up สูสีหรือชนะได้ และ ecosystem enterprise ของ Java ยังใหญ่กว่ามาก"
+        },
+        {
+          "q": "'Auto-configuration' ของ Spring Boot หมายถึงอะไร?",
+          "options": [
+            "การ generate โค้ดใหม่ทุกครั้งที่ build",
+            "การให้ IDE เติมโค้ดอัตโนมัติ",
+            "การที่ framework ตั้งค่า bean ให้เองตาม dependency ที่อยู่ใน classpath",
+            "การเชื่อมต่อฐานข้อมูลโดยไม่ต้องมี driver"
+          ],
+          "answer": 2,
+          "explain": "Spring Boot ดู classpath แล้วเดาว่าเราต้องการอะไร เช่น เจอ driver ของ PostgreSQL + spring-data-jpa ก็สร้าง DataSource กับ EntityManager ให้เอง ไม่ใช่การ generate โค้ดหรือทำงานแทน driver"
+        },
+        {
+          "q": "ทำไม Go จึงถูกเรียกว่าเป็นภาษาแบบ explicit?",
+          "options": [
+            "เพราะทุก error ต้องถูกรับและจัดการอย่างชัดเจนในโค้ด ไม่มี proxy หรือ magic ซ่อนพฤติกรรม",
+            "เพราะต้องประกาศ type ของทุกตัวแปรเสมอ",
+            "เพราะห้ามใช้ third-party library",
+            "เพราะต้องเขียน comment กำกับทุกฟังก์ชัน"
+          ],
+          "answer": 0,
+          "explain": "explicit ใน Go หมายถึงพฤติกรรมทั้งหมดอ่านเจอในโค้ด ไม่มี annotation ที่ห่อ method ลับหลัง — ส่วนการประกาศ type ก็ยังใช้ `:=` อนุมานได้ และ third-party library ใช้ได้ปกติ"
+        }
+      ]
+    },
+    {
+      "title": "2. แกนภาษา — error handling, null และการจัดโครงสร้าง",
+      "tag": "language core",
+      "intro": "จุดที่ dev ข้ามฝั่งแล้วเจ็บที่สุดคือวิธีจัดการ error และแนวคิดเรื่อง null/zero value",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "Exception vs error value",
+          "body": "**Java** ใช้ exception เป็น control flow อีกเส้นหนึ่ง โยนขึ้นไปตาม call stack จนกว่าจะมีใครจับ แบ่งเป็น *checked* (ต้องประกาศ `throws` หรือจับ) กับ *unchecked* (`RuntimeException` — ไม่บังคับ) ใน Spring Boot เรามัก throw exception ของ domain แล้วจับรวมที่ `@RestControllerAdvice` จุดเดียว\n\n**Go** มองว่า error คือค่าธรรมดา ฟังก์ชันคืน `(result, error)` และผู้เรียกต้องตัดสินใจทุกครั้ง ทำให้ code path ที่ผิดพลาดถูกเขียนไว้ตรง ๆ ไม่หายไปในอากาศ แลกกับ `if err != nil` ซ้ำ ๆ"
+        },
+        {
+          "type": "code",
+          "heading": "รูปแบบการจัดการ error ของทั้งสองฝั่ง",
+          "body": "// Java + Spring: โยน แล้วจับรวมที่เดียว\nUser u = repo.findById(id)\n    .orElseThrow(() -> new NotFoundException('user ' + id));\n\n@RestControllerAdvice\nclass ApiErrors {\n  @ExceptionHandler(NotFoundException.class)\n  ResponseEntity<?> handle(NotFoundException e) {\n    return ResponseEntity.status(404).body(Map.of('error', e.getMessage()));\n  }\n}\n\n// Go: คืน error ขึ้นไป พร้อม wrap context ด้วย %w\nu, err := repo.FindByID(ctx, id)\nif err != nil {\n    return fmt.Errorf('find user %d: %w', id, err)\n}\n\n// ปลายทางตรวจชนิดด้วย errors.Is / errors.As\nif errors.Is(err, ErrNotFound) {\n    http.Error(w, 'not found', http.StatusNotFound)\n    return\n}"
+        },
+        {
+          "type": "list",
+          "heading": "เรื่อง null / zero value ที่ต้องจำ",
+          "items": [
+            "Java: reference ที่ไม่ได้ set = `null` → เสี่ยง `NullPointerException` ทางแก้คือ `Optional<T>` สำหรับค่าที่ 'อาจไม่มี' และ validation ที่ชั้น input",
+            "Go: ทุก type มี **zero value** เสมอ — `int` = 0, `string` = \"\", `bool` = false, pointer/map/slice/interface = `nil` แปลว่า struct ที่ยังไม่ได้เซ็ตจะไม่พังทันที แต่จะได้ค่า 0 เงียบ ๆ",
+            "ผลตามมาใน Go: ต้องแยกให้ออกระหว่าง 'ผู้ใช้ส่ง 0 มา' กับ 'ผู้ใช้ไม่ได้ส่งฟิลด์นี้' → ใช้ pointer (`*int`) หรือ `sql.NullInt64` ใน DTO",
+            "Java 8+ ไม่ควรคืน `Optional` เป็นฟิลด์ของ entity หรือ parameter — ตั้งใจให้ใช้เป็น return type เท่านั้น"
+          ]
+        },
+        {
+          "type": "text",
+          "heading": "OOP inheritance vs composition + interface",
+          "body": "Java ใช้ class hierarchy + interface ที่ต้อง `implements` อย่างชัดเจน ส่วน Go **ไม่มี inheritance** มีแต่ struct embedding (composition) และ interface ที่ *satisfy โดยอัตโนมัติ* — ถ้า type มี method ครบตาม interface ก็ถือว่าใช้ได้ทันที ไม่ต้องประกาศอะไร\n\nผลคือ แนวปฏิบัติของ Go คือ **ประกาศ interface ที่ฝั่งผู้ใช้ (consumer) ไม่ใช่ฝั่งผู้ให้บริการ** และให้ interface เล็กที่สุด (1–3 method) ต่างจาก Java ที่มัก define interface คู่กับ implementation ตั้งแต่แรก"
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "Java: 'ถ้าพัง ให้โยนขึ้นไป เดี๋ยวมีคนจับ' — Go: 'ถ้าพัง ต้องตอบตรงนี้เลยว่าจะทำยังไงต่อ' สองแนวคิดนี้กำหนดหน้าตาโค้ดทั้งไฟล์"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดักคลาสสิกของ Go: typed nil ใน interface",
+          "body": "ถ้าคืน pointer ที่เป็น nil ผ่านตัวแปรชนิด `error` ผลลัพธ์จะ **ไม่เท่ากับ nil** เพราะ interface เก็บทั้ง type และ value\n\n`var p *MyErr = nil; var e error = p; e != nil` → true! ทางแก้คือประกาศ return type เป็น `error` แล้ว `return nil` ตรง ๆ อย่าคืนตัวแปร pointer ที่อาจเป็น nil"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ใน Go `fmt.Errorf(\"do x: %w\", err)` ต่างจาก `%v` อย่างไร?",
+          "options": [
+            "`%w` ทำให้ข้อความสั้นลง",
+            "`%w` ห่อ error เดิมไว้ให้ `errors.Is` / `errors.As` ตรวจสอบต้นทางได้",
+            "`%w` เขียน log อัตโนมัติ",
+            "ไม่ต่างกัน เป็นแค่ alias"
+          ],
+          "answer": 1,
+          "explain": "`%w` คือ error wrapping — เก็บ error ต้นทางไว้ในสายโซ่ ทำให้ปลายทางใช้ `errors.Is(err, ErrNotFound)` เจาะลงไปเช็คได้ ส่วน `%v` แปลงเป็นข้อความอย่างเดียว ต้นทางหายไป"
+        },
+        {
+          "q": "struct ของ Go ที่มีฟิลด์ `Age int` และไม่ได้เซ็ตค่า จะมีค่าเท่าใด?",
+          "options": [
+            "nil",
+            "undefined",
+            "0",
+            "โปรแกรม panic ตอนอ่าน"
+          ],
+          "answer": 2,
+          "explain": "Go ให้ zero value เสมอ — `int` เป็น 0 นี่คือเหตุผลที่ต้องใช้ `*int` เมื่อจำเป็นต้องแยก 'ส่ง 0 มา' ออกจาก 'ไม่ได้ส่งค่ามา' ไม่มีสถานะ undefined ในภาษา"
+        },
+        {
+          "q": "แนวปฏิบัติเรื่อง interface ที่ถือว่าเป็น Go idiomatic คือข้อใด?",
+          "options": [
+            "ประกาศ interface ใหญ่ ๆ ไว้ที่ package ของ implementation ตั้งแต่แรก",
+            "ทุก struct ควรมี interface คู่กันเสมอ",
+            "ใช้ inheritance แทน interface เมื่อทำได้",
+            "ประกาศ interface เล็ก ๆ ไว้ฝั่งที่เรียกใช้ (consumer) ตามที่ต้องการจริง"
+          ],
+          "answer": 3,
+          "explain": "Go ใช้ implicit satisfaction จึงนิยม define interface แคบ ๆ ตรงจุดที่ใช้ ทำให้ผูกกันหลวมและ mock ง่าย ส่วน inheritance นั้นภาษาไม่มีให้ใช้ตั้งแต่แรก"
+        }
+      ]
+    },
+    {
+      "title": "3. Concurrency — Thread pool / Virtual Threads vs Goroutine",
+      "tag": "concurrency",
+      "intro": "หัวใจของ backend คือรับหลาย request พร้อมกัน สองฝั่งใช้คนละโมเดล และเพิ่งจะมาบรรจบกันช่วงหลัง",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "โมเดลดั้งเดิม: thread ต่อ request",
+          "body": "Spring MVC แบบเดิมใช้ **platform thread** (thread ของ OS) หนึ่งเส้นต่อหนึ่ง request จาก thread pool ของ Tomcat (ค่าเริ่มต้นราว 200 เส้น) OS thread มีต้นทุน stack ราว 1MB ต่อเส้น จึงสร้างเป็นหมื่นเส้นไม่ไหว ผลคือถ้าทุก request ไปรอ I/O นาน ๆ pool จะเต็มและคิวยาว\n\nทางออกเดิมมีสองทาง: ไป reactive (`WebFlux` + `Mono`/`Flux` แบบ non-blocking) ซึ่งเขียนยากและ debug ยาก หรือขยาย pool ซึ่งชนเพดาน memory"
+        },
+        {
+          "type": "text",
+          "heading": "Goroutine: concurrency ที่ราคาถูก",
+          "body": "Go ออกแบบมาให้ concurrency ถูกตั้งแต่ต้น **goroutine** คือ thread ระดับ runtime ที่เริ่มต้นด้วย stack เพียงไม่กี่ KB และโตได้ตามต้องการ Go scheduler จับหลาย goroutine ไป multiplex บน OS thread จำนวนน้อย (ตาม `GOMAXPROCS`) เมื่อ goroutine ติด I/O scheduler จะสลับไปทำงานอื่นทันที\n\nสื่อสารกันด้วย **channel** ตามคติ *'อย่าสื่อสารด้วยการแชร์ memory จงแชร์ memory ด้วยการสื่อสาร'* และคุมอายุงานด้วย `context.Context`"
+        },
+        {
+          "type": "code",
+          "heading": "รูปแบบที่ใช้บ่อยจริง",
+          "body": "// Go: ยิงงานขนานพร้อมคุม error ด้วย errgroup\ng, ctx := errgroup.WithContext(ctx)\nfor _, id := range ids {\n    id := id\n    g.Go(func() error {\n        return fetchAndStore(ctx, id)\n    })\n}\nif err := g.Wait(); err != nil { return err }\n\n// Java 21+ : virtual threads ทำให้เขียน blocking แต่ scale ได้\ntry (var scope = Executors.newVirtualThreadPerTaskExecutor()) {\n    for (var id : ids) {\n        scope.submit(() -> fetchAndStore(id));\n    }\n}\n\n// เปิด virtual thread ให้ทั้งแอป Spring Boot 3.2+\n// application.yml\n// spring:\n//   threads:\n//     virtual:\n//       enabled: true"
+        },
+        {
+          "type": "list",
+          "heading": "สรุปสิ่งที่ต้องจำ",
+          "items": [
+            "**Virtual threads** (Java 21) ทำให้โค้ด blocking ธรรมดา scale ได้ระดับแสนเส้น — เป็นการดึงจุดแข็งของ goroutine เข้ามาใน JVM และลดความจำเป็นของ WebFlux ในหลายเคส",
+            "Go ไม่มี `Future`/`Promise` ที่เป็นภาษามาตรฐาน — ใช้ channel + `sync.WaitGroup` หรือ `errgroup` แทน",
+            "`context.Context` ต้องเป็น **parameter ตัวแรก** ของฟังก์ชันที่ทำ I/O เสมอ เพื่อส่ง timeout/cancel ลงไปทั้งสาย",
+            "Java มี `ExecutorService`, `CompletableFuture`, `@Async` ให้เลือก — เลือกอย่างเดียวต่อโปรเจกต์ อย่าปนกันจนไล่ไม่ถูก",
+            "ทั้งสองฝั่งต้องระวัง shared state เหมือนกัน — Go มี `sync.Mutex` / `sync/atomic`, Java มี `synchronized` / `java.util.concurrent`"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่างจริง",
+          "body": "endpoint หนึ่งต้องเรียก 3 microservice ที่ตอบภายใน 200ms ต่อเจ้า\n\nแบบ sequential = 600ms / แบบขนานด้วย goroutine + errgroup หรือ virtual threads = ~200ms และถ้าใส่ `context.WithTimeout(ctx, 300*time.Millisecond)` ทุกสายจะถูกยกเลิกพร้อมกันเมื่อครบเวลา ไม่มี goroutine ค้าง"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก: goroutine leak และ pinning",
+          "body": "**Go** — goroutine ที่รอรับจาก channel ที่ไม่มีใครส่งจะค้างตลอดอายุโปรเซส กลายเป็น memory leak ที่มองไม่เห็น ต้องมี `ctx.Done()` หรือปิด channel เสมอ\n\n**Java** — virtual thread ที่ทำงานอยู่ใน block `synchronized` หรือเรียก native call อาจถูก *pin* กับ carrier thread ทำให้ประโยชน์หายไป ทางแก้คือเปลี่ยนไปใช้ `ReentrantLock`"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "เหตุผลหลักที่ goroutine สร้างเป็นหมื่นเส้นได้แต่ platform thread ทำไม่ได้คืออะไร?",
+          "options": [
+            "goroutine ทำงานบน GPU",
+            "goroutine เริ่มต้นด้วย stack ขนาดไม่กี่ KB และถูก multiplex บน OS thread จำนวนน้อย",
+            "goroutine ไม่ใช้ memory เลย",
+            "goroutine ทำงานทีละตัวจึงไม่เปลือง"
+          ],
+          "answer": 1,
+          "explain": "ต้นทุนของ OS thread คือ stack ระดับ MB และ context switch ผ่าน kernel ส่วน goroutine เป็นโครงสร้างใน runtime ที่ stack เล็กและโตได้ scheduler ของ Go จึงสลับงานได้ในระดับ user space"
+        },
+        {
+          "q": "Virtual Threads ใน Java 21 แก้ปัญหาอะไรเป็นหลัก?",
+          "options": [
+            "ทำให้โค้ดสไตล์ blocking scale ได้สูงโดยไม่ต้องเขียนแบบ reactive",
+            "ทำให้ JVM ใช้ CPU หลายคอร์ได้เป็นครั้งแรก",
+            "แทนที่ garbage collector",
+            "ทำให้ compile เป็น native binary ได้"
+          ],
+          "answer": 0,
+          "explain": "virtual thread ทำให้ thread มีต้นทุนต่ำมากจนเขียน blocking code ตรงไปตรงมาได้แต่ยังรองรับ concurrency สูง — ลดเหตุผลที่ต้องหันไป WebFlux ส่วน multi-core JVM ทำได้มานานแล้ว และ native image เป็นเรื่องของ GraalVM"
+        },
+        {
+          "q": "ทำไม `context.Context` จึงควรเป็น parameter ตัวแรกของฟังก์ชันที่ทำ I/O ใน Go?",
+          "options": [
+            "เพื่อให้ compiler optimize ได้ดีขึ้น",
+            "เพราะเป็นข้อบังคับของ compiler",
+            "เพื่อส่ง deadline/cancellation ลงไปทุกชั้น ทำให้ยกเลิกงานทั้งสายได้เมื่อ request ถูกยกเลิก",
+            "เพื่อเก็บ dependency ทั้งหมดของ service ไว้ในนั้น"
+          ],
+          "answer": 2,
+          "explain": "context คือสายส่งสัญญาณ cancel/timeout จาก request ลงไปถึง query สุดท้าย ถ้าไม่ส่งต่อ งานเบื้องล่างจะยังวิ่งทั้งที่ผู้ใช้ตัดการเชื่อมต่อไปแล้ว — เป็น convention ไม่ใช่ข้อบังคับ compiler และไม่ควรใช้เก็บ dependency"
+        }
+      ]
+    },
+    {
+      "title": "4. Web layer — DI + annotation vs handler ที่เขียนเอง",
+      "tag": "http",
+      "intro": "ชั้นที่รับ request เหมือนกัน แต่วิธีประกอบ dependency และ validate ต่างกันคนละขั้ว",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "Dependency Injection: container vs การส่งต่อมือ",
+          "body": "**Spring** มี IoC container สร้าง bean ทั้งหมดตอน startup แล้วฉีดเข้าไปให้ แนะนำให้ใช้ **constructor injection** (ไม่ใช่ `@Autowired` บนฟิลด์) เพราะทำให้ dependency ชัดเจน เป็น `final` ได้ และ test ได้โดยไม่ต้องยก Spring context ขึ้นมา\n\n**Go** ไม่มี container ในภาษา — เราประกอบ dependency เองใน `main.go` ส่งผ่าน constructor ธรรมดา (`NewUserService(repo, logger)`) เห็น dependency graph ทั้งหมดในไฟล์เดียว ถ้าโปรเจกต์ใหญ่มากจึงค่อยใช้ `wire` (compile-time DI) ช่วย"
+        },
+        {
+          "type": "code",
+          "heading": "โครง handler / controller",
+          "body": "// Spring Boot\n@RestController\n@RequestMapping('/api/users')\nclass UserController {\n  private final UserService service;\n  UserController(UserService service) { this.service = service; } // constructor injection\n\n  @PostMapping\n  ResponseEntity<UserRes> create(@Valid @RequestBody CreateUserReq req) {\n    return ResponseEntity.status(201).body(service.create(req));\n  }\n}\n\n// Go (chi router) — dependency ผูกไว้กับ struct ของ handler\ntype UserHandler struct { svc *UserService }\n\nfunc (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {\n    var req CreateUserReq\n    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {\n        writeErr(w, http.StatusBadRequest, 'invalid body'); return\n    }\n    if err := validate.Struct(req); err != nil {\n        writeErr(w, http.StatusUnprocessableEntity, err.Error()); return\n    }\n    res, err := h.svc.Create(r.Context(), req)\n    if err != nil { writeErr(w, http.StatusInternalServerError, 'oops'); return }\n    writeJSON(w, http.StatusCreated, res)\n}\n\n// main.go — ประกอบเองทั้งหมด\nr := chi.NewRouter()\nr.Use(middleware.RequestID, middleware.Recoverer)\nr.Post('/api/users', h.Create)"
+        },
+        {
+          "type": "list",
+          "heading": "ของเทียบกันชิ้นต่อชิ้น",
+          "items": [
+            "**Routing** — `@GetMapping/@PostMapping` ↔ `chi` / `gin` / `net/http` `ServeMux` (Go 1.22 รองรับ method + path pattern ใน stdlib แล้ว)",
+            "**Validation** — Bean Validation (`@Valid`, `@NotBlank`, `@Size`) ↔ `go-playground/validator` ผ่าน struct tag `validate:\"required,min=3\"`",
+            "**Serialization** — Jackson (`@JsonProperty`, `@JsonIgnore`) ↔ `encoding/json` ผ่าน tag `json:\"user_name,omitempty\"`",
+            "**Middleware / filter** — `OncePerRequestFilter`, `HandlerInterceptor` ↔ `func(http.Handler) http.Handler` ที่ห่อกันเป็นชั้น ๆ",
+            "**Error mapping** — `@RestControllerAdvice` จุดเดียว ↔ helper `writeErr` + การ map `errors.Is` ที่ชั้น handler"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "Spring = 'บอกว่าอยากได้อะไร' (declarative ผ่าน annotation) / Go = 'บอกว่าให้ทำอะไรทีละขั้น' (imperative) ทั้งคู่จบที่ HTTP response เหมือนกัน ต่างกันที่ใครเขียนขั้นตอนกลาง"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดักฝั่ง Spring: self-invocation",
+          "body": "annotation อย่าง `@Transactional` และ `@Cacheable` ทำงานผ่าน **proxy** ที่ห่อ bean ไว้ ถ้าเรียก method ของตัวเองภายในคลาสเดียวกัน (`this.save()`) การเรียกนั้นจะ **ไม่ผ่าน proxy** และ annotation จะเงียบไปเฉย ๆ ไม่มี error ให้เห็น\n\nทางแก้: แยก method ไปอีก bean หนึ่ง หรือ inject ตัวเองผ่าน interface — นี่คือราคาของ magic ที่ Go ไม่มีปัญหานี้เลย"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ทำไม constructor injection จึงถูกแนะนำมากกว่า field injection ใน Spring?",
+          "options": [
+            "เพราะเร็วกว่าตอน runtime อย่างมีนัยสำคัญ",
+            "เพราะทำให้ dependency ชัดเจน เป็น final ได้ และ unit test ได้โดยไม่ต้องยก Spring context",
+            "เพราะ field injection ถูกถอดออกจาก Spring แล้ว",
+            "เพราะใช้ memory น้อยกว่า"
+          ],
+          "answer": 1,
+          "explain": "ประโยชน์อยู่ที่ความชัดเจนและการทดสอบ — คลาสประกาศสิ่งที่ตัวเองต้องการผ่าน constructor จึง new ขึ้นมาทดสอบตรง ๆ ได้ ส่วน field injection ยังใช้ได้อยู่ เพียงแต่ซ่อน dependency ไว้"
+        },
+        {
+          "q": "ใน Go middleware มีหน้าตาแบบใด?",
+          "options": [
+            "class ที่ extend BaseMiddleware",
+            "annotation ที่แปะบน handler",
+            "ฟังก์ชันที่รับ `http.Handler` แล้วคืน `http.Handler` ตัวใหม่ที่ห่อของเดิม",
+            "ไฟล์ config ที่ประกาศลำดับ filter"
+          ],
+          "answer": 2,
+          "explain": "middleware ของ Go คือ higher-order function ที่ห่อ handler เป็นชั้น ๆ ทำให้ประกอบและอ่านลำดับได้ตรงจากโค้ด ไม่ต้องพึ่ง class hierarchy หรือไฟล์ config"
+        },
+        {
+          "q": "โค้ดใน service เรียก `this.updateOrder()` ซึ่งมี `@Transactional` แปะไว้ ผลลัพธ์คือ?",
+          "options": [
+            "transaction จะไม่ถูกเปิด เพราะการเรียกภายในคลาสเดียวกันไม่ผ่าน proxy",
+            "transaction ทำงานปกติ",
+            "แอปจะ throw exception ตอน startup",
+            "Spring จะเปิด transaction ซ้อนสองชั้น"
+          ],
+          "answer": 0,
+          "explain": "นี่คือกับดัก self-invocation — proxy ห่ออยู่ 'รอบนอก' object เมื่อเรียก method ของตัวเองด้วย `this` จึงข้าม proxy ไป annotation เลยไม่มีผลและไม่มี error เตือนด้วย"
+        }
+      ]
+    },
+    {
+      "title": "5. Data access — JPA/Hibernate vs database/sql & sqlc",
+      "tag": "database",
+      "intro": "ชั้นที่ต่างกันมากที่สุด: ฝั่งหนึ่งซ่อน SQL ไว้ อีกฝั่งให้เขียน SQL ตรง ๆ",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "ORM เต็มรูป vs SQL-first",
+          "body": "**Spring Data JPA + Hibernate** map object เข้ากับตาราง จัดการ *persistence context* ให้: object ที่โหลดมาจะถูก 'ติดตาม' อยู่ ถ้าแก้ค่าภายใน transaction Hibernate จะ generate `UPDATE` ให้เองตอน flush เขียนโค้ดได้เร็วมาก แต่ต้องรู้ว่ามันยิง SQL อะไรออกไป\n\n**Go** ส่วนใหญ่เลือกทาง SQL-first: `database/sql` + driver แล้วเสริมด้วย `sqlx` (map row เข้า struct) หรือ **`sqlc`** (เขียน SQL แล้ว generate โค้ด type-safe ให้ตอน compile) มี ORM เต็มรูปอย่าง GORM ให้เลือก แต่ชุมชนส่วนใหญ่ยังนิยม SQL ที่มองเห็นได้"
+        },
+        {
+          "type": "code",
+          "heading": "เทียบการ query และ transaction",
+          "body": "// Spring Data JPA — ประกาศ interface ก็ได้ query\ninterface OrderRepo extends JpaRepository<Order, Long> {\n  List<Order> findByUserIdAndStatus(Long userId, Status status);\n}\n\n@Transactional\npublic void checkout(Long orderId) {\n  Order o = repo.findById(orderId).orElseThrow();\n  o.setStatus(PAID);          // ไม่ต้องเรียก save() — dirty checking จัดการให้\n  payment.charge(o);          // ถ้า throw RuntimeException → rollback อัตโนมัติ\n}\n\n// Go — transaction ต้องคุมเอง ชัดเจนทุกบรรทัด\nfunc (r *Repo) Checkout(ctx context.Context, orderID int64) error {\n    tx, err := r.db.BeginTx(ctx, nil)\n    if err != nil { return err }\n    defer tx.Rollback() // ปลอดภัย: no-op ถ้า commit ไปแล้ว\n\n    if _, err := tx.ExecContext(ctx,\n        'UPDATE orders SET status = $1 WHERE id = $2', 'PAID', orderID); err != nil {\n        return fmt.Errorf('update order: %w', err)\n    }\n    return tx.Commit()\n}"
+        },
+        {
+          "type": "list",
+          "heading": "จุดที่ต้องระวังเป็นพิเศษ",
+          "items": [
+            "**N+1 query** — โหลด order 100 ใบแล้ววน `getItems()` = 101 query ทางแก้: `JOIN FETCH`, `@EntityGraph` หรือ batch size (ฝั่ง Go เจอเหมือนกันถ้าวน query ใน loop)",
+            "**LazyInitializationException** — แตะ lazy association นอก transaction/session แล้วพัง ทางแก้: โหลดให้ครบใน service หรือใช้ DTO projection แทนการส่ง entity ออกไปที่ controller",
+            "**Rollback rule** — `@Transactional` ของ Spring rollback อัตโนมัติเฉพาะ **unchecked exception** ถ้า throw checked exception ต้องระบุ `rollbackFor = Exception.class`",
+            "**Connection pool** — Spring Boot ใช้ HikariCP โดยปริยาย / Go ใช้ `sql.DB` ที่ตัวมันเองเป็น pool อยู่แล้ว ต้องตั้ง `SetMaxOpenConns`, `SetMaxIdleConns`, `SetConnMaxLifetime` เอง (ค่าเริ่มต้นคือไม่จำกัด — อันตรายกับ DB)",
+            "**ปิดของให้ครบ** — Go ต้อง `defer rows.Close()` ทุกครั้งที่ `Query` ไม่งั้น connection รั่วจน pool ตัน"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "JPA = ผู้ช่วยที่จำได้ว่าคุณแก้อะไรไปบ้างแล้วไปเขียน SQL ให้เอง / database/sql = คุณเขียนจดหมายถึง DB เองทุกฉบับ ผู้ช่วยเร็วกว่าเมื่อคุณรู้ว่าเขาทำอะไร และอันตรายกว่าเมื่อคุณไม่รู้"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่างเชิงตัวเลข",
+          "body": "หน้า dashboard โหลด order 200 ใบพร้อม item — ถ้า lazy loading ทำงานแบบ N+1 จะยิง 201 query ที่ 2ms/query = ~400ms\n\nเปลี่ยนเป็น `JOIN FETCH` query เดียว = ~15ms และฝั่ง Go ถ้าเขียน SQL join เองก็ได้ผลเดียวกัน — บทเรียนคือ **ปัญหาอยู่ที่จำนวน round trip ไม่ใช่ภาษา**"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "`@Transactional` ของ Spring จะ rollback อัตโนมัติเมื่อเกิด exception ชนิดใดโดยค่าเริ่มต้น?",
+          "options": [
+            "Checked exception เท่านั้น",
+            "ทุก exception รวมถึง checked",
+            "Unchecked exception (RuntimeException) และ Error",
+            "ไม่ rollback อัตโนมัติเลย ต้องเรียก rollback เอง"
+          ],
+          "answer": 2,
+          "explain": "ค่าเริ่มต้นคือ rollback เฉพาะ RuntimeException และ Error ส่วน checked exception จะ commit ตามปกติ จนกว่าจะระบุ `rollbackFor` — เป็นสาเหตุของบั๊กข้อมูลค้างที่พบบ่อยมาก"
+        },
+        {
+          "q": "ปัญหา N+1 query เกิดขึ้นเพราะอะไร?",
+          "options": [
+            "ดึงรายการหลักมา 1 query แล้ววน query ข้อมูลลูกทีละแถวอีก N ครั้ง",
+            "ฐานข้อมูลมี index มากเกินไป",
+            "connection pool เล็กเกินไป",
+            "ใช้ transaction ซ้อนกันหลายชั้น"
+          ],
+          "answer": 0,
+          "explain": "รากของปัญหาคือจำนวน round trip ไป DB ที่โตตามจำนวนแถว ทางแก้คือรวมเป็น query เดียวด้วย join/fetch หรือ batch — ไม่เกี่ยวกับ index หรือขนาด pool โดยตรง"
+        },
+        {
+          "q": "ใน Go หากลืม `defer rows.Close()` หลังเรียก `db.Query` จะเกิดอะไร?",
+          "options": [
+            "compiler จะไม่ยอม build",
+            "connection ไม่ถูกคืนสู่ pool จนในที่สุด pool ตันและ query ค้าง",
+            "ข้อมูลที่อ่านจะไม่ครบ",
+            "ไม่เกิดอะไร เพราะ GC เก็บให้อยู่แล้ว"
+          ],
+          "answer": 1,
+          "explain": "`Rows` ถือ connection ไว้จนกว่าจะอ่านจนหมดหรือถูกปิด GC ไม่ได้รับประกันการคืน connection ให้ทันเวลา ผลคือ pool ค่อย ๆ ตันแล้วทุก query ใหม่จะรอไม่มีกำหนด"
+        }
+      ]
+    },
+    {
+      "title": "6. Config, โครงโปรเจกต์ และ dependency management",
+      "tag": "structure",
+      "intro": "โค้ดที่ดีตายได้ด้วยการจัดโครงที่แย่ — สองฝั่งมี convention คนละแบบ",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "การอ่านค่า config",
+          "body": "**Spring Boot** มี `application.yml` + profile (`application-prod.yml`) และลำดับความสำคัญที่ชัดเจน: command-line arg > env var > profile file > ไฟล์หลัก แล้ว bind เข้า type ด้วย `@ConfigurationProperties` ซึ่ง validate ได้ด้วย `@Validated`\n\n**Go** ใช้ env var เป็นหลักตามหลัก 12-factor อ่านด้วย `os.Getenv` หรือ library อย่าง `viper` / `envconfig` แล้ว parse เข้า struct ตอน startup — แนวปฏิบัติที่ดีคือ **อ่าน config ครั้งเดียวใน `main` แล้วส่งต่อผ่าน constructor** ไม่ใช่เรียก `os.Getenv` กระจายทั่วโค้ด"
+        },
+        {
+          "type": "code",
+          "heading": "โครงไดเรกทอรีที่ใช้จริง",
+          "body": "# Spring Boot — แบ่งตาม layer\nsrc/main/java/com/acme/order/\n  controller/   OrderController.java\n  service/      OrderService.java\n  repository/   OrderRepository.java\n  domain/       Order.java\n  config/       SecurityConfig.java\nsrc/main/resources/application.yml\n\n# Go — layout ที่ชุมชนใช้กันแพร่หลาย\ncmd/api/main.go            # entry point, ประกอบ dependency ทั้งหมด\ninternal/order/            # ห้าม import จากภายนอก module (บังคับโดย compiler)\n    handler.go\n    service.go\n    repository.go\npkg/                       # โค้ดที่ตั้งใจให้ project อื่นใช้ได้\nmigrations/0001_init.sql"
+        },
+        {
+          "type": "list",
+          "heading": "Dependency management",
+          "items": [
+            "**Java** — Maven (`pom.xml`) หรือ Gradle; Spring Boot ใช้ **BOM / dependency management** กำหนดเวอร์ชันชุดที่เข้ากันได้ให้ จึงมักไม่ต้องระบุ `<version>` เอง",
+            "**Go** — `go.mod` + `go.sum` ระบบ module มี **minimal version selection**: เลือกเวอร์ชันต่ำสุดที่สอดคล้องกับทุก requirement ไม่ใช่เวอร์ชันใหม่สุด ทำให้ build reproducible",
+            "Go บังคับ semantic import versioning — major v2 ขึ้นไปต้องมี `/v2` ต่อท้าย import path",
+            "โฟลเดอร์ `internal/` ของ Go เป็นข้อบังคับระดับ compiler — package นอก module import ไม่ได้ ใช้แยกขอบเขตได้ดีกว่าการตั้งชื่อโฟลเดอร์เฉย ๆ",
+            "ทั้งสองฝั่งควร pin เวอร์ชันและมี lock file (`go.sum` / `gradle.lockfile`) อยู่ใน version control เสมอ"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "note",
+          "heading": "แนวโน้มที่มาบรรจบกัน",
+          "body": "ทั้งสอง ecosystem กำลังขยับไปทาง **package by feature** มากกว่า package by layer — คือ `order/` ที่มี handler+service+repo อยู่ด้วยกัน แทนที่จะแยก `controllers/` ที่รวมทุก domain ไว้ เพราะการแก้ feature หนึ่งจะแตะไฟล์ที่อยู่ใกล้กัน"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก: secret ในไฟล์ config",
+          "body": "ทั้งสองฝั่งห้าม commit password/API key ลง `application.yml` หรือไฟล์ `.env` ที่ติดไปกับ repo ให้ฉีดผ่าน env var จาก secret manager ตอน deploy\n\nฝั่ง Spring ระวัง `application-dev.yml` ที่มี credential จริงหลุดขึ้น git — เป็นเหตุการณ์ที่เกิดซ้ำในทุกองค์กร"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "โฟลเดอร์ `internal/` ใน Go มีความหมายพิเศษอย่างไร?",
+          "options": [
+            "เป็นแค่ชื่อโฟลเดอร์ตามธรรมเนียม ไม่มีผลทางเทคนิค",
+            "compiler ห้าม package นอก module นั้น import เข้ามา",
+            "โค้ดข้างในจะไม่ถูก compile",
+            "โค้ดข้างในจะถูก optimize มากกว่าปกติ"
+          ],
+          "answer": 1,
+          "explain": "`internal/` เป็นกฎที่ toolchain บังคับจริง ใช้กันโค้ดภายในไม่ให้กลายเป็น public API โดยไม่ตั้งใจ ต่างจากการตั้งชื่อโฟลเดอร์เฉย ๆ ที่ไม่มีผลบังคับ"
+        },
+        {
+          "q": "Go module ใช้หลัก minimal version selection หมายความว่าอย่างไร?",
+          "options": [
+            "เลือกเวอร์ชันใหม่ล่าสุดเสมอ",
+            "เลือกเวอร์ชันที่มีขนาดไฟล์เล็กที่สุด",
+            "ต้องระบุเวอร์ชันเองทุกครั้ง",
+            "เลือกเวอร์ชันต่ำสุดที่ยังสอดคล้องกับทุก requirement ใน dependency graph"
+          ],
+          "answer": 3,
+          "explain": "MVS เลือกเวอร์ชันต่ำสุดที่พอใช้ได้ ทำให้ build วันนี้กับปีหน้าได้ผลเหมือนกันโดยไม่ต้องมี lock file ที่ซับซ้อน — ต่างจากระบบที่ resolve เป็นเวอร์ชันใหม่สุดเสมอ"
+        },
+        {
+          "q": "ใน Spring Boot ค่าจาก environment variable กับค่าใน `application.yml` ที่ชนกัน ค่าใดชนะ?",
+          "options": [
+            "environment variable",
+            "ค่าใน application.yml",
+            "แอปจะ fail ตอน startup",
+            "ขึ้นกับลำดับตัวอักษรของ key"
+          ],
+          "answer": 0,
+          "explain": "Spring มีลำดับ property source ที่ชัดเจน โดย command-line argument และ environment variable อยู่เหนือไฟล์ config — จึง override ค่าตอน deploy ได้โดยไม่ต้อง rebuild image"
+        }
+      ]
+    },
+    {
+      "title": "7. Testing และ Observability",
+      "tag": "quality",
+      "intro": "ระบบที่ deploy ได้บ่อยคือระบบที่ทดสอบได้เร็วและมองเห็นสิ่งที่เกิดขึ้นข้างในได้",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "เครื่องมือทดสอบสองฝั่ง",
+          "body": "**Java** — JUnit 5 + Mockito สำหรับ unit test, `@WebMvcTest` (โหลดเฉพาะชั้น web), `@DataJpaTest` (เฉพาะชั้น DB) และ `@SpringBootTest` เมื่ออยากยกทั้งแอป ยิ่งโหลด context ใหญ่ยิ่งช้า จึงควรใช้ slice test เป็นหลัก\n\n**Go** — `testing` ใน stdlib พอสำหรับเกือบทุกอย่าง ไม่มี mock framework มาตรฐาน แต่ interface เล็ก ๆ ทำให้เขียน fake struct เองได้ใน 5 บรรทัด มี `httptest.NewServer` สำหรับทดสอบ handler จริง ๆ ผ่าน HTTP\n\nทั้งสองฝั่งใช้ **Testcontainers** ยก PostgreSQL/Kafka จริงขึ้นมาใน Docker ระหว่างเทสได้เหมือนกัน"
+        },
+        {
+          "type": "code",
+          "heading": "Table-driven test — สำนวนมาตรฐานของ Go",
+          "body": "func TestDiscount(t *testing.T) {\n    tests := []struct{\n        name  string\n        total int\n        want  int\n    }{\n        {'ไม่ถึงเกณฑ์', 500, 0},\n        {'ถึงเกณฑ์พอดี', 1000, 100},\n        {'เกินเกณฑ์', 2500, 250},\n    }\n    for _, tt := range tests {\n        t.Run(tt.name, func(t *testing.T) {\n            if got := Discount(tt.total); got != tt.want {\n                t.Errorf('Discount(%d) = %d, want %d', tt.total, got, tt.want)\n            }\n        })\n    }\n}\n\n// รันพร้อม race detector เสมอใน CI\n// go test -race -cover ./..."
+        },
+        {
+          "type": "list",
+          "heading": "Observability: log / metric / trace",
+          "items": [
+            "**Structured logging** — Java: SLF4J + Logback (JSON encoder) / Go: `log/slog` ใน stdlib (Go 1.21+) หรือ `zerolog` — สำคัญคือ log เป็น JSON พร้อม `trace_id` ทุกบรรทัด",
+            "**Metrics** — Java: Micrometer + Spring Boot Actuator เปิด `/actuator/prometheus` ได้ทันที / Go: `prometheus/client_golang` แล้ว expose `/metrics` เอง",
+            "**Health check** — Java: `/actuator/health` มีให้ฟรีพร้อม readiness/liveness probe / Go: เขียน handler เองไม่กี่บรรทัด แต่ต้องอย่าลืมเช็ค dependency จริง (DB ping)",
+            "**Tracing** — OpenTelemetry รองรับทั้งสองภาษา ฝั่ง Java มี **auto-instrumentation ผ่าน java agent** ที่ไม่ต้องแก้โค้ดเลย ส่วน Go ต้องใส่ instrumentation ในโค้ดเอง",
+            "**Profiling** — Go มี `net/http/pprof` ที่เปิดใช้ได้ทันทีใน production (CPU/heap/goroutine) / Java ใช้ JFR (Java Flight Recorder) + async-profiler"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "model",
+          "heading": "โมเดลความคิด",
+          "body": "test แบ่งเป็นสามชั้น: unit (เร็ว หลักพันตัว) → integration ที่มี DB จริง (หลักสิบ) → e2e (นับนิ้วได้) ถ้า pyramid นี้กลับหัวเมื่อไร CI จะช้าจนทีมเลิกรัน"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก: `@SpringBootTest` ทุกไฟล์ และ goroutine leak ในเทส",
+          "body": "**Java** — ใส่ `@SpringBootTest` ทุกคลาสทำให้ CI จาก 30 วินาทีกลายเป็น 10 นาที ใช้ slice test และแชร์ context ให้ได้มากที่สุด (Spring cache context ให้ถ้า configuration เหมือนกัน)\n\n**Go** — เทสที่ยิง goroutine แล้วไม่รอจนจบจะให้ผลไม่แน่นอน (flaky) ต้องรัน `go test -race` ใน CI เสมอเพื่อจับ data race ที่มองด้วยตาไม่เห็น"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ทำไม slice test อย่าง `@WebMvcTest` จึงถูกแนะนำมากกว่า `@SpringBootTest` ในกรณีทั่วไป?",
+          "options": [
+            "เพราะโหลด context เฉพาะชั้นที่ต้องทดสอบ ทำให้เทสเร็วกว่ามาก",
+            "เพราะ `@SpringBootTest` ใช้กับ REST API ไม่ได้",
+            "เพราะ slice test ตรวจเจอบั๊กได้มากกว่า",
+            "เพราะ `@SpringBootTest` ต้องใช้ฐานข้อมูลจริงเสมอ"
+          ],
+          "answer": 0,
+          "explain": "ต้นทุนหลักของเทสฝั่ง Spring คือเวลาโหลด application context การโหลดเฉพาะ slice จึงเร็วกว่ามาก — ไม่ใช่เรื่องความสามารถในการจับบั๊ก และ `@SpringBootTest` เองก็ใช้กับ REST ได้ปกติ"
+        },
+        {
+          "q": "`go test -race` มีไว้ทำอะไร?",
+          "options": [
+            "รันเทสหลายไฟล์พร้อมกันเพื่อความเร็ว",
+            "วัดว่าเทสไหนใช้เวลานานที่สุด",
+            "ตรวจจับการเข้าถึงข้อมูลร่วมกันจากหลาย goroutine โดยไม่มีการ synchronize",
+            "จำลอง network latency"
+          ],
+          "answer": 2,
+          "explain": "race detector จะ instrument การอ่าน/เขียน memory เพื่อรายงาน data race ที่มักไม่ปรากฏในการรันปกติ ควรเปิดใน CI เสมอ ส่วนความเร็วเป็นเรื่องของ `-parallel`"
+        },
+        {
+          "q": "ข้อได้เปรียบของ Java เรื่อง distributed tracing เมื่อเทียบกับ Go คือข้อใด?",
+          "options": [
+            "OpenTelemetry รองรับเฉพาะ Java",
+            "มี java agent ที่ทำ auto-instrumentation ได้โดยไม่ต้องแก้โค้ดแอป",
+            "Java ส่ง trace ได้เร็วกว่าเพราะ JIT",
+            "Go ไม่มี library สำหรับ tracing"
+          ],
+          "answer": 1,
+          "explain": "OTel java agent เข้าไป instrument bytecode ตอน runtime จึงได้ span ของ HTTP/JDBC/Kafka มาฟรี ส่วน Go ที่คอมไพล์เป็น binary ต้องใส่ instrumentation ในโค้ดเอง — ทั้งสองภาษามี library รองรับ"
+        }
+      ]
+    },
+    {
+      "title": "8. Performance, Deployment และการเลือกใช้งาน",
+      "tag": "production",
+      "intro": "ปิดท้ายด้วยชั้นที่เห็นความต่างชัดที่สุดตอนขึ้น production จริง",
+      "blocks": [
+        {
+          "type": "text",
+          "heading": "Memory และ Garbage Collector",
+          "body": "**JVM** จองพื้นที่ heap ล่วงหน้าและมี GC ให้เลือกหลายตัว (G1 เป็นค่าเริ่มต้น, ZGC สำหรับ pause ต่ำมาก) ปรับจูนได้ละเอียด แต่ก็ต้องปรับ — ในคอนเทนเนอร์ต้องตั้ง `-XX:MaxRAMPercentage=75` ไม่ใช่ปล่อยตามค่าเริ่มต้น\n\n**Go** ใช้ GC แบบ concurrent mark-and-sweep ที่เน้น pause สั้นมาก (ระดับต่ำกว่ามิลลิวินาที) มีปุ่มปรับแค่ไม่กี่ตัว: `GOGC` (ตั้งความถี่ GC) และ `GOMEMLIMIT` (soft limit ที่ใส่ได้ตั้งแต่ Go 1.19 — สำคัญมากในคอนเทนเนอร์ที่มี memory limit)"
+        },
+        {
+          "type": "list",
+          "heading": "ภาพรวมตอน deploy",
+          "items": [
+            "**Artifact** — Java: fat jar ~30–60MB ต้องมี JRE base image (~200MB+) / Go: static binary ~10–20MB ใส่ใน `scratch` หรือ `distroless` ได้ image รวมไม่กี่ MB",
+            "**Startup** — Spring Boot ทั่วไป ~1–3 วินาที (ยิ่ง bean เยอะยิ่งนาน) / Go binary พร้อมรับ request ในหลักสิบมิลลิวินาที → ต่างกันมากในงาน autoscaling และ serverless",
+            "**GraalVM Native Image** — Spring Boot 3 build เป็น native ได้ ทำให้ startup เหลือหลักสิบ ms และ memory ลดฮวบ แลกกับเวลา build ที่นานและข้อจำกัดเรื่อง reflection",
+            "**Cross-compile** — Go ตั้ง `GOOS=linux GOARCH=arm64 go build` ก็ได้ binary สำหรับอีก platform ทันที / Java พึ่ง 'write once run anywhere' ผ่าน JVM ของ platform นั้น",
+            "**Graceful shutdown** — ทั้งสองฝั่งต้องรับ SIGTERM แล้วปิด listener + รอ in-flight request ให้จบ (Spring: `server.shutdown=graceful` / Go: `srv.Shutdown(ctx)`)"
+          ]
+        },
+        {
+          "type": "code",
+          "heading": "Multi-stage Dockerfile ฝั่ง Go",
+          "body": "FROM golang:1.22 AS build\nWORKDIR /src\nCOPY go.mod go.sum ./\nRUN go mod download\nCOPY . .\nRUN CGO_ENABLED=0 GOOS=linux go build -ldflags='-s -w' -o /out/api ./cmd/api\n\nFROM gcr.io/distroless/static-debian12\nCOPY --from=build /out/api /api\nUSER nonroot:nonroot\nENTRYPOINT ['/api']\n\n# ฝั่ง Spring Boot ให้ใช้ layered jar เพื่อให้ layer ของ dependency ถูก cache\n# RUN java -Djarmode=layertools -jar app.jar extract"
+        },
+        {
+          "type": "text",
+          "heading": "แล้วควรเลือกอะไร",
+          "body": "เลือก **Spring Boot** เมื่อ: domain ซับซ้อนและต้องการ transaction/ORM ที่โตเต็มวัย, ทีมคุ้น Java อยู่แล้ว, ต้องต่อกับระบบ enterprise (SOAP, batch, message broker หลายตัว), หรือมีข้อกำหนดด้าน security/compliance ที่มี starter สำเร็จรูปอยู่แล้ว\n\nเลือก **Go** เมื่อ: ต้องการ footprint เล็กและ startup เร็ว (sidecar, gateway, worker, serverless), งานเน้น I/O และ concurrency สูง, ทีมต้องการโค้ดที่คนใหม่อ่านเข้าใจเร็ว, หรือ deploy บน edge/ARM ที่ทรัพยากรจำกัด\n\nในองค์กรจริง คำตอบมักเป็น **ทั้งคู่** — service หลักที่มี business logic หนักอยู่บน Spring Boot ส่วน infrastructure service และ gateway เขียนด้วย Go"
+        },
+        {
+          "type": "callout",
+          "variant": "example",
+          "heading": "ตัวอย่างเทียบให้เห็นภาพ",
+          "body": "worker ที่อ่านคิวแล้วเรียก API ภายนอก ต้อง autoscale จาก 2 → 50 pod ภายในไม่กี่วินาที\n\nGo: pod ใหม่พร้อมทำงานเกือบทันที ใช้ RAM ~30MB ต่อ pod\nSpring Boot (JVM ปกติ): ต้องรอ startup ~2 วินาที + warm up ให้ JIT ทำงานเต็มที่ และตั้ง memory request ~300–512MB\n\nที่ 50 pod ความต่างนี้คือค่า infra หลักหมื่นบาทต่อเดือน — ถ้าเป็น service ที่มี pod เดียววิ่งตลอด ความต่างแทบไม่มีผล"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "heading": "กับดัก: JVM ในคอนเทนเนอร์ และ GOMEMLIMIT",
+          "body": "**JVM** — ถ้าไม่ตั้ง `MaxRAMPercentage` หรือใช้ base image เก่า JVM อาจมองไม่เห็น cgroup limit แล้วขยาย heap เกินจน pod โดน OOMKilled\n\n**Go** — GC ของ Go ไม่รู้จัก memory limit ของคอนเทนเนอร์เองโดยอัตโนมัติ ถ้าไม่ตั้ง `GOMEMLIMIT` ให้ใกล้เคียงกับ limit ของ pod ก็โดน OOMKilled ได้เช่นกัน ทั้งสองฝั่งต้องบอก runtime ว่ามีพื้นที่เท่าไร"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "ทำไม Go จึงได้เปรียบชัดเจนในงาน serverless หรือ autoscaling ถี่ ๆ?",
+          "options": [
+            "เพราะ Go มี throughput สูงกว่าเสมอ",
+            "เพราะ startup เร็วระดับมิลลิวินาทีและไม่ต้องรอ JIT warm up",
+            "เพราะ Go ไม่มี garbage collector",
+            "เพราะ Go ใช้ CPU น้อยกว่าเสมอในทุก workload"
+          ],
+          "answer": 1,
+          "explain": "cold start คือหัวใจของ serverless — native binary พร้อมทำงานทันที ส่วน JVM ต้องโหลด class, สร้าง bean และรอ JIT ทำ optimization และ Go ก็มี GC เช่นกัน (แต่ปรับจูนน้อยกว่า)"
+        },
+        {
+          "q": "`GOMEMLIMIT` มีไว้ทำอะไร?",
+          "options": [
+            "จำกัดขนาดไฟล์ binary ตอน build",
+            "กำหนดจำนวน goroutine สูงสุด",
+            "ตั้ง soft memory limit ให้ GC ทำงานถี่ขึ้นก่อนจะชนเพดานของคอนเทนเนอร์",
+            "กำหนดจำนวน CPU core ที่ใช้ได้"
+          ],
+          "answer": 2,
+          "explain": "`GOMEMLIMIT` บอก runtime ว่ามีเพดาน memory เท่าไร GC จะเร่งทำงานเมื่อเข้าใกล้ ช่วยกัน OOMKill ในคอนเทนเนอร์ — ส่วนจำนวน core คุมด้วย `GOMAXPROCS`"
+        },
+        {
+          "q": "GraalVM Native Image ให้ประโยชน์อะไรกับ Spring Boot และแลกมาด้วยอะไร?",
+          "options": [
+            "ทำให้ throughput สูงสุดในระยะยาวดีขึ้น แลกกับ startup ที่ช้าลง",
+            "ทำให้ startup และ memory ดีขึ้นมาก แลกกับ build ที่นานและข้อจำกัดเรื่อง reflection",
+            "ทำให้เขียน Go ร่วมกับ Java ในโปรเจกต์เดียวได้",
+            "ลดขนาดโค้ดที่ต้องเขียนลงครึ่งหนึ่ง"
+          ],
+          "answer": 1,
+          "explain": "native image คอมไพล์ล่วงหน้า (AOT) จึง start เร็วและกิน RAM น้อย แต่ไม่มี JIT คอยปรับ optimize ระหว่างรัน ทำให้ peak throughput อาจสู้ JVM ไม่ได้ และ reflection ต้องประกาศ hint ไว้ล่วงหน้า"
+        }
+      ]
+    }
+  ]
+}
